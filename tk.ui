@@ -1,0 +1,26 @@
+<?xml version='1.0' encoding='utf-8'?>
+<interface>
+  <object class="tk.Toplevel" id="mFrame">
+    <property name="height">200</property>
+    <property name="width">200</property>
+    <child>
+      <object class="tk.LabelFrame" id="lblAF">
+        <property name="cursor">arrow</property>
+        <property name="height">201</property>
+        <property name="padx">0</property>
+        <property name="pady">0</property>
+        <property name="text" translatable="yes">AF</property>
+        <property name="width">200</property>
+        <layout>
+          <property name="column">0</property>
+          <property name="ipadx">3</property>
+          <property name="ipady">3</property>
+          <property name="padx">3</property>
+          <property name="pady">3</property>
+          <property name="propagate">True</property>
+          <property name="row">0</property>
+        </layout>
+      </object>
+    </child>
+  </object>
+</interface>

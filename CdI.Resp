@@ -1,0 +1,365 @@
+'''
+ Cambios de Inventario
+'''
+from tkinter import Tk, Toplevel, messagebox
+from datetime import date
+from A5 import A5,A5Tk
+import win32com.client
+import win32ui
+import tempfile
+import os
+import re
+#import ctypes
+#ctypes.windll.user32.ShowWindow( ctypes.windll.kernel32.GetConsoleWindow(), 6 )
+
+#messagebox.showerror("uno","Dos")
+Hoy= date.today()
+Fecha= Hoy.strftime("%d/%m/%Y")
+# Cargo Headers
+Param= A5("CdICfg.xlsx","Parametros","ParName")
+
+def Pmt(VarName):
+    return Param.D["ParName"][VarName]["ParVal"] 
+
+C2H= {} # Numero de columna --> Nombre columna
+H2C= {} # Nombre columna --> Numero de columna
+Lista={} # Para cada columna, los valores posibles
+nc= 0
+LxF=0
+for c in Pmt("DesCol").split("|"):
+    C2H[nc]= c
+    H2C[c]= nc
+    Lista[c]={""}
+    LxF+= len(c)
+    nc+= 1
+
+Modif= Pmt("Modif").split("|")
+kPos= H2C[Pmt("Serial")]
+IxL= int(Pmt("ItemsXlinea"))
+LxF= str(int(LxF*IxL/3.2))
+
+iKeys= {} # Directorio con clave serial, y dato: una lista con los valores de cada columna
+kList= {" "}
+l= 0
+with open(Pmt("PathName")+".csv",errors="backslashreplace") as a:
+    for lin in a:
+        if l > 2:
+            Col= lin[0:-1].split(";")
+            k= Col[kPos].upper()
+            if len(Col)==nc:
+                if k in iKeys:
+                    win32ui.MessageBox("El numero de serie:\n\n\t"+k+"\n\nEsta repetido en el inventario. Este software solo traera el primer registro con esa clave.", "CUIDADO!!!")              
+                else:
+                    Col.append(l)
+                    iKeys[k]= lin[0:-1]
+                    kList.update({k})
+                    x=0
+                    for n in range(0,nc):
+                        if Col[n] not in Lista[C2H[x]]: 
+                            Lista[C2H[x]].update({Col[n]})  
+                        x+= 1
+            else: print(k,"Serial con cantidad de columnas "+str(len(Col))+" incorrectas")
+        l+= 1
+print("Cargando ubicaciones...")
+Ubica=A5(Pmt("PathName")+".xlsm",Pmt("Ubica"),Pmt("kUbica"))
+print("Ubicaciones cargadas.")
+kUbica=H2C[Pmt("Custodio")]
+
+Cambios= {} # Clave serial, datos: string completo de datos
+# Si ya existian cambios, los leo
+if os.path.isfile(Pmt("Cambios")):
+    with open(Pmt("Cambios"),errors="backslashreplace") as fp:
+        for tx in fp:
+            lDat=tx[:-1].split("\t")
+            Cambios[lDat[0]]=lDat[1]
+    fp.close()
+
+
+def Cambios_Save():
+    if os.path.isfile(Pmt("Cambios")): os.remove(Pmt("Cambios"))
+    Sale= open(Pmt("Cambios"),"w",newline="\n")
+    for s in Cambios:
+        Sale.write(str(s)+"\t"+Cambios[s]+"\n")
+    Sale.close()
+
+
+def L2S(Lista,Sep):
+    RetVal=""
+    for i in Lista: RetVal+=str(i)+Sep
+    RetVal= RetVal[:-1]
+    return RetVal
+
+
+def ShowAF(event=" "):
+    global Cambios
+    if (gui.GetVal("Tecnico") in Lista[Pmt("TecCambio")]) and (len(gui.GetVal("Tecnico"))>1):
+        gui.On("Tecnico", False)
+        if gui.ValOk("Dato"):
+            k= gui.GetVal("Dato")
+            if k in iKeys:
+                aFrame= Toplevel(mFrame)
+                aFrame.geometry(LxF+'x'+str(IxL*15))
+                af= A5Tk(aFrame,"Datos del serial "+gui.GetVal("Dato"),Icon="ECOGAS.gif")
+                Col= iKeys[k].split(";")
+                Primero=""
+                fc=0
+                fr=0
+                for i in Modif:
+                    af.Create(i, "e", (fr*2)+1, fc, i, Values=Lista[i],ExChk=r"^[^;\n\t]*$",Horiz=False)
+                    af.SetVal(i, Col[H2C[i]])
+                    if Primero=="": Primero= i
+                    fc+= 1
+                    if fc==IxL:
+                        fr+=1
+                        fc=0
+                def Cambio(event=None):
+                    # Aplico cambios realizados.
+                    for i in Modif: Col[H2C[i]]= re.sub("^\s*|\s*$", "", af.GetVal(i))       
+                    Nuevo=";".join(Col)
+                    if iKeys[k] != Nuevo: 
+                        Cambios[k]= Nuevo
+                        Cambios_Save()
+                        gui.SetVal("Envio", "Enviar "+str(len(Cambios))+" Cambios <E>")
+                        gui.On("Envio", True)
+                    aFrame.destroy()
+                af.Create("Cambio","b",(fr*2)+2, fc,Text="Aceptar Cambios <C>",fBind=Cambio)
+                aFrame.bind("<Alt_L><c>",Cambio)
+                af.SetFocus(Primero,True)
+            gui.SetFocus("Dato",True)
+        else:
+            messagebox.showwarning("Aviso", "Debe seleccionar un dato valido")
+            gui.SetFocus("Dato",True)
+    else: 
+        messagebox.showwarning("Aviso", "Seleccione un Tecnico valido")
+        gui.SetFocus("Tecnico",True)
+
+
+def Envio(event=" "):
+    global Cambios
+    global nc
+    global gui
+    if len(Cambios)>0:
+        gui.SetVal("Envio", "Sin Cambios")
+        gui.On("Envio",False)
+        fName=tempfile.gettempdir()+"\\Cambio_Inventario.xlsx"
+        Sale=A5(fName,"Inventario",Create=True)
+        Sale.SetCell(1, 1, "Movimiento")
+        Heads= Pmt("DesCol").split("|")
+        for f in range(0,Pmt("Ultimos")): Heads.pop() 
+        Sale.SetCell(1, 2, Heads)
+        f=2
+        a=0 # cantidad de altas
+        Items=0
+        for k in sorted(Cambios):
+            df= 0
+            Movi= "Nuevo Activo"
+            if k in iKeys:
+                Ori= iKeys[k].split(";")
+                Sale.SetCell(f,1,"Activo Actual")
+                Movi= "Cambio Efectuado"
+                a+=1
+                df= 1
+            New= Cambios[k].split(";")
+            Sale.SetCell(f+df,1,Movi)
+            uOk= (New[kUbica] in Ubica.D[Pmt("kUbica")])
+            for c in range(0,nc-Pmt("Ultimos")):
+                if df==1: Sale.SetCell(f  , c+2, Ori[c])
+                C=C2H[c]
+                if C==Pmt("fCambio"):
+                    Sale.SetCell(f+df, c+2, Fecha)
+                elif C==Pmt("TecCambio"):
+                    Sale.SetCell(f+df, c+2, gui.GetVal("Tecnico"))
+                elif uOk and (C in Ubica.D[Pmt("kUbica")][New[kUbica]]):
+                    Sale.SetCell(f+df, c+2, Ubica.D[Pmt("kUbica")][New[kUbica]][C])
+                else:
+                    Sale.SetCell(f+df, c+2, New[c])
+            Items+= 1
+            f+=1+df
+        Sale.Background("cyan", 1, 1, 1,Title=True)  
+        Sale.Save()
+        Cambios={}
+        # Envio correo
+        olMailItem = 0x0
+        obj= win32com.client.Dispatch("Outlook.Application")
+        mText= "Cambio_Inventario de"+os.getlogin()+" - altas "+str(Items-a)+" sobre total de "+str(Items)
+        Correo = obj.CreateItem(olMailItem)
+        Correo.To= Pmt("Correo")
+        #Correo.CC= "Operaciones"
+        Correo.Subject= mText
+        Correo.Attachments.Add(Source=fName)
+        Correo.BodyFormat= 2
+        Correo.HTMLBody= mText
+        Correo.Display(True)
+        if os.path.isfile(Pmt("Cambios")): os.remove(Pmt("Cambios"))
+    else:
+        messagebox.showwarning("Aviso", "No aplico cambios para enviar")
+
+
+def Nuevos():
+    if (gui.GetVal("Tecnico") in Lista[Pmt("TecCambio")]) and (len(gui.GetVal("Tecnico"))>1):
+        gui.On("Tecnico", False)
+        aFrame= Toplevel(mFrame)
+        af= A5Tk(aFrame,"Alta de Activos Fijos",Icon="ECOGAS.gif")
+        af.Create("afs", "t", 0, 0, "Numeros de AF", Horiz=False)
+        af.Create("srl", "t", 0, 1, "Nuevos Seriales", Horiz=False)
+        n=af.GetObj("afs").configure(height=4,width=20)
+        af.GetObj("srl").configure(height=4,width=20)
+        #af.Create("label1", "l",5,1, Text="_______________ Textos comunes _______________")
+        Primero=""
+        for i in Pmt("Alta").split("|"):
+            af.Create(i, "e", Text=i, Values=Lista[i],ExChk=r"^[^;\n\t]*$")
+            if Primero=="": Primero= i
+        af.SetFocus(i)
+        def Genera():
+            def limpio(lStr):
+                s= af.GetVal(lStr)
+                s= re.sub(r"\n\s*\n", "\n", s)
+                s= re.sub(r"\n\s*$", "", s)
+                return s.split("\n")
+            NroAFs=limpio("afs")
+            NroSrl=limpio("srl")
+            AF= H2C[Pmt("AF")]
+            SR= H2C[Pmt("Serial")]
+            if len(NroAFs)==len(NroSrl):
+                Col=[]
+                for i in range(1,nc):Col.append("")
+                for s in range(0,len(NroSrl)):
+                    for i in Pmt("Alta").split("|"): Col[H2C[i]]= re.sub("^\s*|\s*$", "", af.GetVal(i)) 
+                    Col[AF]= NroAFs[s]
+                    Col[SR]= NroSrl[s]
+                    Cambios[NroSrl[s]]=";".join(Col)
+                gui.On("Envio",True)
+                gui.SetVal("Envio", "Enviar "+str(len(Cambios))+" Cambios <E>")
+                Cambios_Save()
+                aFrame.destroy()
+            else:messagebox.showwarning("Aviso", "Las cantidades de Activos Fijos y Seriales, deben ser iguales.")
+        af.Create("Genera", "b", Text="Generar altas <g>", fBind=Genera)
+        aFrame.bind("<Alt_L><g>",Genera)
+        af.SetFocus("afs")
+    else: 
+        messagebox.showwarning("Aviso", "Seleccione un Tecnico valido")
+        gui.SetFocus("Tecnico",True)
+    
+
+def ShowCust(event=" "):
+    if (gui.GetVal("Tecnico") in Lista[Pmt("TecCambio")]) and (len(gui.GetVal("Tecnico"))>1):
+        gui.On("Tecnico", False)
+        if gui.ValOk("Dato"):
+            CUST=gui.GetVal("Dato")
+            cFrame= Toplevel(mFrame)
+            cFrame.wm_state('iconic')
+            cu= A5Tk(cFrame,"A.F. que posee el custodio "+CUST,Icon="ECOGAS.gif")
+            
+            def Swap(event=" "):
+                global Cambios
+                srlist=re.sub("(\n\s*)*$","", cu.GetVal("swSerial")).upper()
+                newSerial= srlist.split("\n")
+                oldSerial= cu.GetChkBoxs()
+                if len(newSerial) == len(oldSerial):
+                    sw=0
+                    for ns in oldSerial: # Para cada serial a rotar
+                        if newSerial[sw] in iKeys:
+                            New=iKeys[newSerial[sw]].split(";")
+                            Ori=iKeys[ns].split(";")
+                            # Intercambio datos
+                            for h in Pmt("DesCol").split("|"):
+                                if h in Pmt("Swap"):
+                                    c=H2C[h]
+                                    Ori[c], New[c] = New[c], Ori[c]
+                            Cambios[newSerial[sw]]=";".join(Ori)  
+                            Cambios[ns]=";".join(New)
+                            cu.SetVal(ns, False)
+                            sw+=1
+                        else: messagebox.showwarning("Aviso", "El serial "+newSerial[sw]+" No existe en el inventario.\nCorrijalo y reintente")
+                    if not cu.GetChkBoxs():
+                        gui.On("Envio",True)
+                        gui.SetVal("Envio", "Enviar "+str(len(Cambios))+" Cambios <E>")
+                        gui.SetVal("Dato", "")
+                        Cambios_Save()
+                        cFrame.destroy()
+                else:messagebox.showwarning("Aviso", "Debe poner "+str(len(oldSerial))+" seriales para poder\nrotarlos con los que selecciono")
+            
+            nl= 0
+            nc= 0
+            cu.Create("Serial", "l", nl, nc, "Serial")
+            for h in Pmt("ChCust").split("|"): 
+                nc+= 1
+                cu.Create(h, "l", nl, nc, h,Span=1)
+            # Muestro seriales y datos del Custodio
+            Primero=""
+            for s in sorted(kList):
+                if (s!=" ") and (nl<29):
+                    c=iKeys[s].split(";")
+                    if CUST == c[H2C[Pmt("Custodio")]]:
+                        nl+= 1
+                        cu.Create(s, "c", nl, 0, s,Span=1) # Serial encontrado falta fbind
+                        if Primero=="": Primero=s
+                        # Muestro datos del serial encontrado.
+                        nc= 0
+                        for h in Pmt("ChCust").split("|"):
+                            nc+= 1
+                            cu.Create("caso"+str(nl)+str(nc), "l", nl, nc, Text=c[H2C[h]],Span=1)
+            if nl==0: 
+                cFrame.destroy()
+                messagebox.showwarning("Aviso", "Custodio sin activos asignados")
+            else:
+                def AddSrl(event=" "):
+                    txt=cu.GetVal("swSerial")
+                    cu.SetVal("swSerial", txt+cu.GetVal("prusrl")+"\n")
+                    cu.SetVal("prusrl","")
+                def bserial(event=" "):
+                    cu.SetFocus("prusrl", True)
+                cu.Create("swSerial", "t",nl+1,0, Text="Seriales para intercambio (en orden,1 por linea)",Horiz=False)
+                cu.SetWH("swSerial", 20, 5)
+                cu.Create("prusrl", "e", nl+1, 1, "Buscar <S>erial", kList, fBind=AddSrl)
+                cu.Create("swap", "b", nl+2, 1, Text="<R>otar seriales",fBind=Swap,Span=nc)
+                cFrame.bind("<Alt_L><r>",Swap)
+                cFrame.bind("<Alt_L><s>",bserial)
+                cu.SetFocus(Primero,True)
+        else:
+            messagebox.showwarning("Aviso", "Debe seleccionar un dato valido")
+            gui.SetFocus("Dato",True)
+
+
+def CustSer(event=" "):
+    if gui.GetVal("RadSerial"):
+        gui.Set("Dato", "Values", kList)
+        gui.Set("Dato", "ExChk", r"^[\dA-Za-z_]+$")
+        gui.SetSimil("Dato", Sets=True)
+        gui.Set("Dato", "fBind", ShowAF)
+    else:
+        gui.Set("Dato", "Values", Lista[Pmt("Custodio")])
+        gui.Set("Dato", "ExChk", r"^\d{5} [^\t;]+$")
+        gui.SetSimil("Dato", Sets=False)
+        gui.Set("Dato", "fBind", ShowCust)
+
+
+mFrame= Tk()
+loginname=os.getlogin()[2:]
+gui= A5Tk(mFrame, "Activos Fijos", TopLeft=[100,100], Icon="ECOGAS.gif")
+gui.Create("Tecnico", "e", 0, 0, "User: ",Values=Lista[Pmt("TecCambio")])
+gui.GetObj("Tecnico").configure(width=30)
+gui.SetVal("Tecnico", loginname)
+gui.Create("RadSerial", "c", 1, 1, Text="Seleccionar por Serial", fBind=CustSer,Span=1)
+gui.SetVal("RadSerial", True)
+gui.Create("Dato", "e", 2, 0, "Ingrese dato")
+CustSer()
+gui.Create("Envio", "b", 3, 1, "Sin cambios", fBind=Envio)
+gui.Create("Nuevo", "b", 3, 0, "Nuevos AF", fBind=Nuevos)
+if len(Cambios)>0: gui.SetVal("Envio","Enviar "+str(len(Cambios))+" Cambios <E>")
+else: gui.On("Envio", False)
+mFrame.bind("<Alt_L><e>",Envio)
+gui.SetFocus("Tecnico")
+mFrame.mainloop()
+
+
+
+
+
+
+
+
+
+
+
+
